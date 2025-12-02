@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+	"encoding/base64"
 
 	"golang.org/x/time/rate"
 
@@ -74,6 +75,11 @@ type Client struct {
 		Metadata    bool
 		ExtJwt      bool
 	}
+	SaslInProgress bool
+	SaslDone       bool
+	SaslCapEndSent bool
+	SaslChunks     []string
+	SaslChunksSent bool
 	// The specific message-tags CAP that the client has requested if we are wrapping it
 	RequestedMessageTagsCap string
 	// Prefix used by the server when sending its own messages
@@ -305,6 +311,7 @@ func (c *Client) connectUpstream() {
 	client.readUpstream()
 	client.writeWebircLines(upstream)
 	client.maybeSendPass(upstream)
+	client.maybeDoSasl(upstream)
 	client.SendClientSignal("state", "connected")
 }
 
@@ -481,6 +488,11 @@ func (c *Client) processLineToUpstream(data string) {
 	client := c
 	upstreamConfig := c.UpstreamConfig
 
+	if (c.SaslInProgress || c.SaslDone) && (strings.HasPrefix(strings.ToUpper(data), "PASS ") || strings.HasPrefix(strings.ToUpper(data), "NICK ") || strings.HasPrefix(strings.ToUpper(data), "USER ") || strings.HasPrefix(strings.ToUpper(data), "CAP ")) {
+		// Drop registration/CAP lines while gateway drives SASL registration
+		return
+	}
+
 	if strings.HasPrefix(data, "PASS ") && c.SentPass {
 		// Hijack the PASS command if we already sent a pass command
 		return
@@ -526,6 +538,73 @@ func (c *Client) processLineToUpstream(data string) {
 	}
 }
 
+// Inject SASL PLAIN upstream if configured
+func (c *Client) maybeDoSasl(upstream io.ReadWriteCloser) {
+	if c.UpstreamConfig.Sasl == nil || !c.UpstreamConfig.Sasl.Enabled || c.UpstreamConfig.Sasl.Password == "" {
+		return
+	}
+	c.SaslInProgress = true
+
+	account := c.UpstreamConfig.Sasl.Account
+	if account == "" {
+		account = c.IrcState.Nick
+	}
+	pass := c.UpstreamConfig.Sasl.Password
+
+	// Send CAP REQ SASL, then NICK/USER, then AUTHENTICATE PLAIN with payload.
+	// CAP END is deferred until we see the SASL result to avoid aborting registration.
+	nick := c.IrcState.Nick
+	if nick == "" {
+		nick = account
+	}
+	user := c.IrcState.Username
+	if user == "" {
+		user = account
+	}
+	real := c.IrcState.RealName
+	if real == "" {
+		real = account
+	}
+
+	plain := fmt.Sprintf("%s\u0000%s\u0000%s", account, account, pass)
+	payload := base64.StdEncoding.EncodeToString([]byte(plain))
+
+	// IRC limits messages to 512 bytes; SASL payload params must be <=400 bytes. Be conservative to account for prefix/command/CRLF overhead.
+	const maxChunk = 300
+	chunks := make([]string, 0, (len(payload)/maxChunk)+2)
+	for start := 0; start < len(payload); start += maxChunk {
+		end := start + maxChunk
+		if end > len(payload) {
+			end = len(payload)
+		}
+		chunks = append(chunks, payload[start:end])
+	}
+	// If the last chunk is exactly maxChunk bytes, send a terminating "+" per SASL spec.
+	if len(chunks) > 0 && len(chunks[len(chunks)-1]) == maxChunk {
+		chunks = append(chunks, "+")
+	} else if len(chunks) == 0 {
+		// Empty payload edge case
+		chunks = append(chunks, "+")
+	}
+
+	lines := []string{
+		"CAP REQ :sasl",
+		fmt.Sprintf("NICK %s", nick),
+		fmt.Sprintf("USER %s 0 * :%s", user, real),
+		"AUTHENTICATE PLAIN",
+	}
+
+	for _, l := range lines {
+		c.Log(1, "->upstream (sasl): %s", l)
+		upstream.Write([]byte(l + "\n"))
+	}
+
+	// Hold the payload until the server prompts with AUTHENTICATE +
+	c.SaslChunks = chunks
+	c.SaslChunksSent = false
+	c.SaslInProgress = true
+}
+
 func (c *Client) handleLineFromUpstream(data string) {
 	client := c
 	upstreamConfig := c.UpstreamConfig
@@ -557,12 +636,55 @@ func (c *Client) handleLineFromUpstream(data string) {
 		return
 	}
 
+	if message != nil {
+		client.maybeHandleSaslReply(message)
+	}
+
 	data = client.ProcessLineFromUpstream(data)
 	if data == "" {
 		return
 	}
 
 	client.SendClientSignal("data", data)
+}
+
+// maybeHandleSaslReply waits for SASL result before ending CAP
+func (c *Client) maybeHandleSaslReply(msg *irc.Message) {
+	if !c.SaslInProgress || msg == nil {
+		return
+	}
+
+	// Server prompts for the payload
+	if strings.ToUpper(msg.Command) == "AUTHENTICATE" && len(msg.Params) > 0 && msg.Params[0] == "+" && !c.SaslChunksSent {
+		for _, chunk := range c.SaslChunks {
+			line := "AUTHENTICATE " + chunk
+			c.Log(1, "->upstream (sasl): %s", line)
+			if c.upstream != nil {
+				c.upstream.Write([]byte(line + "\n"))
+			}
+		}
+		c.SaslChunksSent = true
+		return
+	}
+
+	switch msg.Command {
+	case "900", "903": // success
+		c.Log(1, "->upstream (sasl): CAP END (success)")
+		if c.upstream != nil && !c.SaslCapEndSent {
+			c.upstream.Write([]byte("CAP END\n"))
+			c.SaslCapEndSent = true
+		}
+		c.SaslInProgress = false
+		c.SaslDone = true
+	case "902", "904", "905", "906", "907", "908": // failures/abort
+		c.Log(1, "->upstream (sasl): CAP END (failure)")
+		if c.upstream != nil && !c.SaslCapEndSent {
+			c.upstream.Write([]byte("CAP END\n"))
+			c.SaslCapEndSent = true
+		}
+		c.SaslInProgress = false
+		c.SaslDone = true
+	}
 }
 
 func typeOfErr(err error) string {

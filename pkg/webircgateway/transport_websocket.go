@@ -65,6 +65,19 @@ func (t *TransportWebsocket) websocketHandler(ws *websocket.Conn) {
 		client.Tags["secure"] = ""
 	}
 
+	// Capture bearer token if provided
+	authHeader := ws.Request().Header.Get("Authorization")
+	if strings.HasPrefix(strings.ToLower(authHeader), "bearer ") {
+		tok := strings.TrimSpace(authHeader[len("bearer "):])
+		if tok != "" {
+			client.Tags["jwt"] = tok
+		}
+	}
+
+	if jwtParam := ws.Request().URL.Query().Get("jwt"); jwtParam != "" {
+		client.Tags["jwt"] = jwtParam
+	}
+
 	_, remoteAddrPort, _ := net.SplitHostPort(ws.Request().RemoteAddr)
 	client.Tags["remote-port"] = remoteAddrPort
 

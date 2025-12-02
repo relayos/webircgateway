@@ -28,6 +28,15 @@ type ConfigUpstream struct {
 	Proxy                *ConfigProxy
 	Protocol             string
 	LocalAddr            string
+	Sasl                 *ConfigSasl
+}
+
+// ConfigSasl - SASL settings to use when connecting upstream
+type ConfigSasl struct {
+	Enabled   bool
+	Mechanism string
+	Account   string
+	Password  string
 }
 
 // ConfigServer - A web server config

@@ -61,6 +61,18 @@ func (t *TransportKiwiirc) makeChannel(chanID string, ws sockjs.Session) *Transp
 		client.Tags["secure"] = ""
 	}
 
+	authHeader := ws.Request().Header.Get("Authorization")
+	if strings.HasPrefix(strings.ToLower(authHeader), "bearer ") {
+		tok := strings.TrimSpace(authHeader[len("bearer "):])
+		if tok != "" {
+			client.Tags["jwt"] = tok
+		}
+	}
+	if jwtParam := ws.Request().URL.Query().Get("jwt"); jwtParam != "" {
+		client.Tags["jwt"] = jwtParam
+	}
+	client.Log(1, "kiwiirc rawquery=%s", ws.Request().URL.RawQuery)
+
 	// This doesn't make sense to have since the remote port may change between requests. Only
 	// here for testing purposes for now.
 	_, remoteAddrPort, _ := net.SplitHostPort(ws.Request().RemoteAddr)
