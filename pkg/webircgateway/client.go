@@ -308,6 +308,10 @@ func (c *Client) connectUpstream() {
 	client.State = ClientStateRegistering
 
 	client.upstream = upstream
+	// Set SaslInProgress early so readUpstream() will drop client CAP/NICK/USER lines
+	if client.UpstreamConfig.Sasl != nil && client.UpstreamConfig.Sasl.Enabled && client.UpstreamConfig.Sasl.Password != "" {
+		client.SaslInProgress = true
+	}
 	client.readUpstream()
 	client.writeWebircLines(upstream)
 	client.maybeSendPass(upstream)
