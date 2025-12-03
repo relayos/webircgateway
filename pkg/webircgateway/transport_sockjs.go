@@ -61,6 +61,13 @@ func (t *TransportSockjs) sessionHandler(session sockjs.Session) {
 	_, remoteAddrPort, _ := net.SplitHostPort(session.Request().RemoteAddr)
 	client.Tags["remote-port"] = remoteAddrPort
 
+	// Read query params into Tags for WEBIRC flags
+	for key, values := range session.Request().URL.Query() {
+		if len(values) > 0 {
+			client.Tags[key] = values[0]
+		}
+	}
+
 	client.Log(2, "New sockjs client on %s from %s %s", session.Request().Host, client.RemoteAddr, client.RemoteHostname)
 	client.Ready()
 

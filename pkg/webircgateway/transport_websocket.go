@@ -68,6 +68,13 @@ func (t *TransportWebsocket) websocketHandler(ws *websocket.Conn) {
 	_, remoteAddrPort, _ := net.SplitHostPort(ws.Request().RemoteAddr)
 	client.Tags["remote-port"] = remoteAddrPort
 
+	// Read query params into Tags for WEBIRC flags
+	for key, values := range ws.Request().URL.Query() {
+		if len(values) > 0 {
+			client.Tags[key] = values[0]
+		}
+	}
+
 	client.Log(2, "New websocket client on %s from %s %s", ws.Request().Host, client.RemoteAddr, client.RemoteHostname)
 	client.Ready()
 
