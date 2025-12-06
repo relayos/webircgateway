@@ -60,11 +60,11 @@ func (t *TransportSockjs) sessionHandler(session sockjs.Session) {
 	if strings.HasPrefix(strings.ToLower(authHeader), "bearer ") {
 		tok := strings.TrimSpace(authHeader[len("bearer "):])
 		if tok != "" {
-			client.Tags["jwt"] = tok
+			client.Tags["token"] = tok
 		}
 	}
-	if jwtParam := session.Request().URL.Query().Get("jwt"); jwtParam != "" {
-		client.Tags["jwt"] = jwtParam
+	if tokenParam := session.Request().URL.Query().Get("token"); tokenParam != "" {
+		client.Tags["token"] = tokenParam
 	}
 	client.Log(1, "sockjs rawquery=%s", session.Request().URL.RawQuery)
 

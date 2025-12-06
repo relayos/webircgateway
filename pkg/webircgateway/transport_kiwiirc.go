@@ -65,11 +65,11 @@ func (t *TransportKiwiirc) makeChannel(chanID string, ws sockjs.Session) *Transp
 	if strings.HasPrefix(strings.ToLower(authHeader), "bearer ") {
 		tok := strings.TrimSpace(authHeader[len("bearer "):])
 		if tok != "" {
-			client.Tags["jwt"] = tok
+			client.Tags["token"] = tok
 		}
 	}
-	if jwtParam := ws.Request().URL.Query().Get("jwt"); jwtParam != "" {
-		client.Tags["jwt"] = jwtParam
+	if tokenParam := ws.Request().URL.Query().Get("token"); tokenParam != "" {
+		client.Tags["token"] = tokenParam
 	}
 	client.Log(1, "kiwiirc rawquery=%s", ws.Request().URL.RawQuery)
 

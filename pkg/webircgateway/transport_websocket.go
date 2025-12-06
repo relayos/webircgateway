@@ -70,12 +70,12 @@ func (t *TransportWebsocket) websocketHandler(ws *websocket.Conn) {
 	if strings.HasPrefix(strings.ToLower(authHeader), "bearer ") {
 		tok := strings.TrimSpace(authHeader[len("bearer "):])
 		if tok != "" {
-			client.Tags["jwt"] = tok
+			client.Tags["token"] = tok
 		}
 	}
 
-	if jwtParam := ws.Request().URL.Query().Get("jwt"); jwtParam != "" {
-		client.Tags["jwt"] = jwtParam
+	if tokenParam := ws.Request().URL.Query().Get("token"); tokenParam != "" {
+		client.Tags["token"] = tokenParam
 	}
 
 	_, remoteAddrPort, _ := net.SplitHostPort(ws.Request().RemoteAddr)
